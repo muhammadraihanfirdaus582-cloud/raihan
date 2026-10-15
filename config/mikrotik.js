@@ -14,7 +14,7 @@ class MikrotikConfig {
       port: this.port,
       user: this.user,
       password: this.password,
-      timeout: 3000 // Menggunakan 3 detik agar Serverless Vercel tidak hang
+      timeout: 3000 // Batas koneksi 3 detik agar Serverless Vercel tidak hang
     });
   }
 
@@ -61,7 +61,7 @@ class MikrotikConfig {
     }
   }
 
-  // 3. Ambil Statistik User (Uptime, Bytes, Packets)
+  // 3. Ambil Statistik User
   async getUsersStats() {
     const client = this.getClient();
     try {
