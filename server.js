@@ -35,42 +35,36 @@ app.post('/api/register', async (req, res) => {
   try {
     const { name, email, phone, username, password } = req.body;
     
-    // Validasi input
     if (!name || !email || !phone || !username || !password) {
       return res.status(400).json({ success: false, message: 'Semua field wajib diisi' });
     }
     
-    // Cek ketersediaan username
     const existingUser = await storageConfig.getUserByUsername(username);
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'Username sudah digunakan' });
     }
     
-    // Simpan ke Upstash Redis
     await storageConfig.addUser({ name, email, phone, username, password });
     
-    res.json({ success: true, message: 'Registrasi berhasil. Silakan tunggu persetujuan admin.' });
+    return res.json({ success: true, message: 'Registrasi berhasil. Silakan tunggu persetujuan admin.' });
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Registrasi gagal' });
+    return res.status(500).json({ success: false, message: 'Registrasi gagal' });
   }
 });
 
-// 2. Get all users (admin panel) - Bebas dari timeout Vercel
+// 2. Get all users (admin panel)
 app.get(['/api/users', '/api/admin/users'], async (req, res) => {
   try {
-    // Matikan caching browser agar data selalu paling baru
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     
-    // Ambil data dari Upstash Redis
     const users = await storageConfig.getAllUsers();
     
-    // Ambil statistik MikroTik dengan batas waktu 2 detik
     let mikrotikStats = [];
     try {
       if (mikrotikConfig.getUsersStats && typeof mikrotikConfig.getUsersStats === 'function') {
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('MikroTik Timeout')), 2000)
+          setTimeout(() => reject(new Error('MikroTik Timeout')), 2500)
         );
         mikrotikStats = await Promise.race([mikrotikConfig.getUsersStats(), timeoutPromise]);
       }
@@ -78,7 +72,6 @@ app.get(['/api/users', '/api/admin/users'], async (req, res) => {
       mikrotikStats = [];
     }
 
-    // Gabungkan data user dan statistik MikroTik
     const enrichedUsers = (users || []).map(user => {
       const stats = Array.isArray(mikrotikStats) 
         ? mikrotikStats.find(s => s.name === user.username || s.user === user.username) || {} 
@@ -92,10 +85,10 @@ app.get(['/api/users', '/api/admin/users'], async (req, res) => {
       };
     });
 
-    res.json({ success: true, users: enrichedUsers });
+    return res.json({ success: true, users: enrichedUsers });
   } catch (error) {
     console.error('Error getting users:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil data user' });
+    return res.status(500).json({ success: false, message: 'Gagal mengambil data user' });
   }
 });
 
@@ -115,10 +108,10 @@ app.post('/api/approve', async (req, res) => {
       await mikrotikConfig.addUserToHotspot(userData.username, userData.password);
     }
     
-    res.json({ success: true, message: 'User berhasil disetujui' });
+    return res.json({ success: true, message: 'User berhasil disetujui' });
   } catch (error) {
     console.error('Approval error:', error);
-    res.status(500).json({ success: false, message: 'Gagal menyetujui user' });
+    return res.status(500).json({ success: false, message: 'Gagal menyetujui user' });
   }
 });
 
@@ -134,10 +127,10 @@ app.post('/api/reject', async (req, res) => {
     await storageConfig.rejectUser(username, adminName || 'Admin');
     await mikrotikConfig.removeUserFromHotspot(username);
     
-    res.json({ success: true, message: 'User berhasil ditolak' });
+    return res.json({ success: true, message: 'User berhasil ditolak' });
   } catch (error) {
     console.error('Rejection error:', error);
-    res.status(500).json({ success: false, message: 'Gagal menolak user' });
+    return res.status(500).json({ success: false, message: 'Gagal menolak user' });
   }
 });
 
@@ -149,10 +142,10 @@ app.delete('/api/users/:username', async (req, res) => {
     await storageConfig.deleteUser(username);
     await mikrotikConfig.removeUserFromHotspot(username);
     
-    res.json({ success: true, message: 'User berhasil dihapus' });
+    return res.json({ success: true, message: 'User berhasil dihapus' });
   } catch (error) {
     console.error('Deletion error:', error);
-    res.status(500).json({ success: false, message: 'Gagal menghapus user' });
+    return res.status(500).json({ success: false, message: 'Gagal menghapus user' });
   }
 });
 
@@ -160,13 +153,16 @@ app.delete('/api/users/:username', async (req, res) => {
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   if (password === (process.env.ADMIN_PASSWORD || 'admin')) {
-    res.json({ success: true, message: 'Login admin berhasil' });
+    return res.json({ success: true, message: 'Login admin berhasil' });
   } else {
-    res.status(401).json({ success: false, message: 'Password admin salah' });
+    return res.status(401).json({ success: false, message: 'Password admin salah' });
   }
 });
 
 module.exports = app;
 
 if (process.env.NODE_ENV !== 'production') {
-  app.
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
