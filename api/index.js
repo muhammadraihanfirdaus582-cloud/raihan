@@ -1,107 +1,109 @@
 const express = require('express');
 const app = express();
 
-// Memakai file storage & mikrotik asli milik kamu
-const storage = require('../config/storage');
+// 1. PERBAIKAN PATH IMPORT: Sesuaikan ke folder data/ & config/
+const storage = require('../data/storage');
 const mikrotik = require('../config/mikrotik');
-const { RouterOSClient } = require('routeros-client');
 
 app.use(express.json());
 
-// Helper koneksi MikroTik via Tunnel.id untuk ambil traffic
-async function getMikrotikTraffic() {
-    // TAMBAHAN: Mendukung variabel Vercel MIKROTIK_IP & MIKROTIK_HOST sekaligus
-    const host = process.env.MIKROTIK_IP || process.env.MIKROTIK_HOST;
-    const port = process.env.MIKROTIK_API_PORT || process.env.MIKROTIK_PORT || '8728';
-    const user = process.env.MIKROTIK_API_USER || process.env.MIKROTIK_USER;
-    const password = process.env.MIKROTIK_API_PASSWORD || process.env.MIKROTIK_PASSWORD;
-
-    if (!host) {
-        console.error("Host/IP MikroTik tidak ditemukan di Environment Variables");
-        return { mtUsers: [], mtActive: [] };
-    }
-
-    const client = new RouterOSClient({
-        host: host,
-        port: parseInt(port),
-        user: user,
-        password: password,
-        timeout: 5
-    });
-
+// 1. ENDPOINT REGISTRASI USER BARU (WAJIB ADA)
+app.post('/api/register', async (req, res) => {
     try {
-        const api = await client.connect();
-        const mtUsers = await api.menu('/ip/hotspot/user').get();
-        const mtActive = await api.menu('/ip/hotspot/active').get();
-        await client.close();
-        return { mtUsers, mtActive };
-    } catch (err) {
-        console.error("Gagal terhubung ke MikroTik API:", err.message);
-        return { mtUsers: [], mtActive: [] };
-    }
-}
+        const { name, email, phone, username, password } = req.body;
 
-// 1. ENDPOINT GET USERS + TRAFFIC MIKROTIK
+        if (!username || !password) {
+            return res.status(400).json({ success: false, message: 'Username dan Password wajib diisi' });
+        }
+
+        // Simpan data registrasi ke Redis storage
+        const newUser = await storage.addUser({ name, email, phone, username, password });
+
+        res.json({ 
+            success: true, 
+            message: 'Registrasi berhasil, menunggu persetujuan admin',
+            user: newUser 
+        });
+    } catch (error) {
+        console.error('Error registrasi:', error.message);
+        res.status(500).json({ success: false, message: 'Gagal melakukan registrasi' });
+    }
+});
+
+// 2. ENDPOINT GET USERS + LIVE TRAFFIC MIKROTIK
 app.get('/api/users', async (req, res) => {
     try {
-        // Ambil data user dari users.json lewat storage.js kamu
-        const users = await storage.getUsers(); 
+        // Matikan caching browser agar data selalu paling baru
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
-        // Ambil data live traffic dari MikroTik
-        const { mtUsers, mtActive } = await getMikrotikTraffic();
+        // PERBAIKAN: Gunakan getAllUsers() sesuai fungsi di storage.js
+        const users = await storage.getAllUsers(); 
 
-        // Gabungkan traffic ke data user kamu
+        // Ambil data statistik dari config/mikrotik.js
+        const mtStats = await mikrotik.getUsersStats().catch(() => []);
+
+        // Gabungkan live traffic ke data user database
         const responseUsers = users.map(user => {
-            const mtUser = mtUsers.find(u => u.name && u.name.toLowerCase() === user.username.toLowerCase());
-            const activeUser = mtActive.find(u => u.user && u.user.toLowerCase() === user.username.toLowerCase());
+            const mtUser = mtStats.find(u => u.name && u.name.toLowerCase() === user.username.toLowerCase());
 
             return {
                 ...user,
-                bytesIn: mtUser ? parseInt(mtUser['bytes-in'] || 0) : 0,   // Upload
-                bytesOut: mtUser ? parseInt(mtUser['bytes-out'] || 0) : 0, // Download
-                uptime: activeUser ? `${activeUser.uptime} (Online)` : (mtUser ? (mtUser.uptime || 'Off') : 'Off')
+                'bytes-in': mtUser ? mtUser['bytes-in'] : 0,
+                'bytes-out': mtUser ? mtUser['bytes-out'] : 0,
+                'packets-in': mtUser ? mtUser['packets-in'] : 0,
+                'packets-out': mtUser ? mtUser['packets-out'] : 0,
+                uptime: mtUser ? mtUser.uptime : '00:00:00'
             };
         });
 
         res.json({ success: true, users: responseUsers });
     } catch (error) {
+        console.error('Error get users:', error.message);
         res.status(500).json({ success: false, message: 'Gagal mengambil data user' });
     }
 });
 
-// 2. ENDPOINT APPROVE (Pakai logika storage asli kamu)
+// 3. ENDPOINT APPROVE (Simpan di DB + Tambah ke Hotspot WinBox)
 app.post('/api/approve', async (req, res) => {
     try {
-        const { username } = req.body;
-        if (storage.approveUser) {
-            await storage.approveUser(username);
+        const { username, password } = req.body;
+
+        // Update status di Storage Redis
+        await storage.approveUser(username, 'Admin');
+
+        // Tambahkan user ke Hotspot MikroTik
+        if (password) {
+            await mikrotik.addUserToHotspot(username, password);
         }
-        res.json({ success: true, message: `User ${username} berhasil diapprove` });
+
+        res.json({ success: true, message: `User ${username} berhasil disetujui` });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
 
-// 3. ENDPOINT REJECT (Pakai logika storage asli kamu)
+// 4. ENDPOINT REJECT
 app.post('/api/reject', async (req, res) => {
     try {
         const { username } = req.body;
-        if (storage.rejectUser) {
-            await storage.rejectUser(username);
-        }
-        res.json({ success: true, message: `User ${username} berhasil direject` });
+
+        await storage.rejectUser(username, 'Admin');
+        await mikrotik.removeUserFromHotspot(username);
+
+        res.json({ success: true, message: `User ${username} berhasil ditolak` });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
 
-// 4. ENDPOINT DELETE (Pakai logika storage asli kamu agar users.json terupdate)
+// 5. ENDPOINT DELETE USER
 app.delete('/api/users/:username', async (req, res) => {
     try {
         const { username } = req.params;
-        if (storage.deleteUser) {
-            await storage.deleteUser(username);
-        }
+
+        await storage.deleteUser(username);
+        await mikrotik.removeUserFromHotspot(username);
+
         res.json({ success: true, message: `User ${username} berhasil dihapus` });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
