@@ -6,7 +6,7 @@ const mikrotik = require('../config/mikrotik');
 
 app.use(express.json());
 
-// 1. ENDPOINT REGISTRASI USER BARU
+// 1. ENDPOINT REGISTRASI
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, phone, username, password } = req.body;
@@ -28,27 +28,27 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 2. ENDPOINT GET USERS + LIVE TRAFFIC (CEPAT & BEBAS CRASH/TIMEOUT)
+// 2. ENDPOINT GET USERS + LIVE TRAFFIC (AMAIN & FAST)
 app.get(['/api/users', '/api/admin/users'], async (req, res) => {
     try {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
-        // 1. Ambil data dari Storage Redis terlebih dahulu
+        // 1. Ambil data dari Storage Redis DULU
         const users = await storage.getAllUsers(); 
 
-        // 2. Ambil data MikroTik dengan batas waktu maksimal 3 detik
+        // 2. Timeout max 2.5 detik untuk MikroTik
         let mtStats = [];
         try {
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('MikroTik Timeout')), 3000)
+                setTimeout(() => reject(new Error('MikroTik Timeout')), 2500)
             );
             mtStats = await Promise.race([mikrotik.getUsersStats(), timeoutPromise]);
         } catch (mtErr) {
-            console.warn('MikroTik Lambat/Offline, menggunakan fallback data lokal.');
+            console.warn('MikroTik offline/slow, fallback data lokal.');
             mtStats = [];
         }
 
-        // 3. Match traffic MikroTik ke user
+        // 3. Gabungkan data
         const responseUsers = (users || []).map(user => {
             const mtUser = Array.isArray(mtStats) 
                 ? mtStats.find(u => u.name && u.name.toLowerCase() === user.username.toLowerCase()) 
