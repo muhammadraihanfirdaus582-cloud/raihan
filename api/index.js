@@ -1,13 +1,12 @@
 const express = require('express');
 const app = express();
 
-// 1. PERBAIKAN PATH IMPORT: Sesuaikan ke folder data/ & config/
 const storage = require('../data/storage');
 const mikrotik = require('../config/mikrotik');
 
 app.use(express.json());
 
-// 1. ENDPOINT REGISTRASI USER BARU (WAJIB ADA)
+// 1. ENDPOINT REGISTRASI USER BARU
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, phone, username, password } = req.body;
@@ -16,7 +15,6 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ success: false, message: 'Username dan Password wajib diisi' });
         }
 
-        // Simpan data registrasi ke Redis storage
         const newUser = await storage.addUser({ name, email, phone, username, password });
 
         res.json({ 
@@ -30,21 +28,31 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 2. ENDPOINT GET USERS + LIVE TRAFFIC MIKROTIK
-app.get('/api/users', async (req, res) => {
+// 2. ENDPOINT GET USERS + LIVE TRAFFIC (CEPAT & BEBAS CRASH/TIMEOUT)
+app.get(['/api/users', '/api/admin/users'], async (req, res) => {
     try {
-        // Matikan caching browser agar data selalu paling baru
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
-        // PERBAIKAN: Gunakan getAllUsers() sesuai fungsi di storage.js
+        // 1. Ambil data dari Storage Redis terlebih dahulu
         const users = await storage.getAllUsers(); 
 
-        // Ambil data statistik dari config/mikrotik.js
-        const mtStats = await mikrotik.getUsersStats().catch(() => []);
+        // 2. Ambil data MikroTik dengan batas waktu maksimal 3 detik
+        let mtStats = [];
+        try {
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('MikroTik Timeout')), 3000)
+            );
+            mtStats = await Promise.race([mikrotik.getUsersStats(), timeoutPromise]);
+        } catch (mtErr) {
+            console.warn('MikroTik Lambat/Offline, menggunakan fallback data lokal.');
+            mtStats = [];
+        }
 
-        // Gabungkan live traffic ke data user database
-        const responseUsers = users.map(user => {
-            const mtUser = mtStats.find(u => u.name && u.name.toLowerCase() === user.username.toLowerCase());
+        // 3. Match traffic MikroTik ke user
+        const responseUsers = (users || []).map(user => {
+            const mtUser = Array.isArray(mtStats) 
+                ? mtStats.find(u => u.name && u.name.toLowerCase() === user.username.toLowerCase()) 
+                : null;
 
             return {
                 ...user,
@@ -56,22 +64,20 @@ app.get('/api/users', async (req, res) => {
             };
         });
 
-        res.json({ success: true, users: responseUsers });
+        return res.status(200).json({ success: true, users: responseUsers });
     } catch (error) {
         console.error('Error get users:', error.message);
-        res.status(500).json({ success: false, message: 'Gagal mengambil data user' });
+        return res.status(200).json({ success: true, users: [] });
     }
 });
 
-// 3. ENDPOINT APPROVE (Simpan di DB + Tambah ke Hotspot WinBox)
+// 3. ENDPOINT APPROVE
 app.post('/api/approve', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        // Update status di Storage Redis
         await storage.approveUser(username, 'Admin');
 
-        // Tambahkan user ke Hotspot MikroTik
         if (password) {
             await mikrotik.addUserToHotspot(username, password);
         }
