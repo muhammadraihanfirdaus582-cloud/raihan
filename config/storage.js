@@ -3,60 +3,47 @@ const { Redis } = require('@upstash/redis');
 class StorageConfig {
   constructor() {
     this.redisKey = 'hotspot_users_data';
-    this.data = { users: [] };
-    
     try {
       this.redis = Redis.fromEnv();
     } catch (err) {
-      console.error('Peringatan: Gagal menginisialisasi Upstash Redis:', err.message);
+      console.error('Error inisialisasi Upstash Redis:', err.message);
       this.redis = null;
     }
   }
 
-  async initialize() {
-    if (!this.redis) return;
+  async getAllUsers() {
+    if (!this.redis) return [];
     try {
-      const existingData = await this.redis.get(this.redisKey);
-      if (existingData) {
-        this.data = typeof existingData === 'string' ? JSON.parse(existingData) : existingData;
-      } else {
-        await this.saveData();
-      }
+      const data = await this.redis.get(this.redisKey);
+      if (!data) return [];
+      return typeof data === 'string' ? JSON.parse(data) : data;
     } catch (error) {
-      console.error('Error initializing storage:', error.message);
-    }
-  }
-
-  async saveData() {
-    if (!this.redis) return;
-    try {
-      await this.redis.set(this.redisKey, JSON.stringify(this.data));
-    } catch (error) {
-      console.error('Error saving data:', error.message);
+      console.error('Error getting users:', error.message);
+      return [];
     }
   }
 
   async addUser(userData) {
+    if (!this.redis) throw new Error('Database Redis tidak terhubung');
     try {
-      await this.initialize();
+      const users = await this.getAllUsers();
       
-      const timestamp = new Date().toISOString();
       const newUser = {
         id: Date.now().toString(),
-        timestamp,
+        timestamp: new Date().toISOString(),
         name: userData.name || userData.username,
         email: userData.email || '-',
         phone: userData.phone || '-',
         username: userData.username,
         password: userData.password,
-        status: 'PENDING',
+        status: 'pending',
         approvedAt: '',
         approvedBy: ''
       };
 
-      if (!this.data.users) this.data.users = [];
-      this.data.users.push(newUser);
-      await this.saveData();
+      users.push(newUser);
+      await this.redis.set(this.redisKey, JSON.stringify(users));
+      console.log('Berhasil menambahkan user ke Redis:', newUser.username);
       
       return newUser;
     } catch (error) {
@@ -65,29 +52,30 @@ class StorageConfig {
     }
   }
 
-  async getAllUsers() {
+  async getUserByUsername(username) {
     try {
-      await this.initialize();
-      return this.data.users || [];
+      const users = await this.getAllUsers();
+      return users.find(u => u.username === username) || null;
     } catch (error) {
-      console.error('Error getting users:', error.message);
-      return [];
+      console.error('Error getting user by username:', error.message);
+      return null;
     }
   }
 
   async approveUser(username, adminName) {
+    if (!this.redis) return null;
     try {
-      await this.initialize();
-      const userIndex = this.data.users.findIndex(u => u.username === username);
+      const users = await this.getAllUsers();
+      const userIndex = users.findIndex(u => u.username === username);
       
       if (userIndex === -1) throw new Error('User not found');
       
-      this.data.users[userIndex].status = 'APPROVED';
-      this.data.users[userIndex].approvedAt = new Date().toISOString();
-      this.data.users[userIndex].approvedBy = adminName;
+      users[userIndex].status = 'approved';
+      users[userIndex].approvedAt = new Date().toISOString();
+      users[userIndex].approvedBy = adminName;
       
-      await this.saveData();
-      return this.data.users[userIndex];
+      await this.redis.set(this.redisKey, JSON.stringify(users));
+      return users[userIndex];
     } catch (error) {
       console.error('Error approving user:', error.message);
       throw error;
@@ -95,43 +83,31 @@ class StorageConfig {
   }
 
   async rejectUser(username, adminName) {
+    if (!this.redis) return null;
     try {
-      await this.initialize();
-      const userIndex = this.data.users.findIndex(u => u.username === username);
+      const users = await this.getAllUsers();
+      const userIndex = users.findIndex(u => u.username === username);
       
       if (userIndex === -1) throw new Error('User not found');
       
-      this.data.users[userIndex].status = 'REJECTED';
-      this.data.users[userIndex].approvedAt = new Date().toISOString();
-      this.data.users[userIndex].approvedBy = adminName;
+      users[userIndex].status = 'rejected';
+      users[userIndex].approvedAt = new Date().toISOString();
+      users[userIndex].approvedBy = adminName;
       
-      await this.saveData();
-      return this.data.users[userIndex];
+      await this.redis.set(this.redisKey, JSON.stringify(users));
+      return users[userIndex];
     } catch (error) {
       console.error('Error rejecting user:', error.message);
       throw error;
     }
   }
 
-  async getUserByUsername(username) {
-    try {
-      await this.initialize();
-      return this.data.users.find(u => u.username === username) || null;
-    } catch (error) {
-      console.error('Error getting user:', error.message);
-      return null;
-    }
-  }
-
   async deleteUser(username) {
+    if (!this.redis) return false;
     try {
-      await this.initialize();
-      const userIndex = this.data.users.findIndex(u => u.username === username);
-      
-      if (userIndex === -1) throw new Error('User not found');
-      
-      this.data.users.splice(userIndex, 1);
-      await this.saveData();
+      let users = await this.getAllUsers();
+      users = users.filter(u => u.username !== username);
+      await this.redis.set(this.redisKey, JSON.stringify(users));
       return true;
     } catch (error) {
       console.error('Error deleting user:', error.message);
