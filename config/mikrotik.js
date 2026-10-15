@@ -14,7 +14,7 @@ class MikrotikConfig {
       port: this.port,
       user: this.user,
       password: this.password,
-      timeout: 10000
+      timeout: 3000 // Menggunakan 3 detik agar Serverless Vercel tidak hang
     });
   }
 
