@@ -353,8 +353,12 @@
     </div>
 
     <script>
-        // Menggunakan relatif origin agar bekerja otomatis di domain Vercel mana pun
-        const BACKEND_URL = window.location.origin;
+        // URL Domain Produksi Vercel sesuai Screenshot
+        const VERCEL_DOMAIN = 'https://raihan-ivory.vercel.app';
+        
+        const BACKEND_URL = window.location.origin.includes('vercel.app') 
+            ? window.location.origin 
+            : VERCEL_DOMAIN;
 
         const form = document.getElementById('registerForm');
         const submitBtn = document.getElementById('submitBtn');
