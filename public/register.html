@@ -353,12 +353,8 @@
     </div>
 
     <script>
-        // URL Domain Produksi Vercel sesuai Screenshot
-        const VERCEL_DOMAIN = 'https://raihan-ivory.vercel.app';
-        
-        const BACKEND_URL = window.location.origin.includes('vercel.app') 
-            ? window.location.origin 
-            : VERCEL_DOMAIN;
+        // Menggunakan domain Vercel utama yang aktif untuk menghindari error captive portal MikroTik
+        const BACKEND_URL = 'https://raihan-ivory.vercel.app';
 
         const form = document.getElementById('registerForm');
         const submitBtn = document.getElementById('submitBtn');
