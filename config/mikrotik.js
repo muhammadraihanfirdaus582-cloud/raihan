@@ -5,7 +5,8 @@ class MikrotikConfig {
     this.host = process.env.MIKROTIK_HOST || process.env.MIKROTIK_IP || 'idn27.tunnel.id';
     this.user = process.env.MIKROTIK_USER || process.env.MIKROTIK_API_USER;
     this.password = process.env.MIKROTIK_PASSWORD || process.env.MIKROTIK_API_PASSWORD;
-    this.port = parseInt(process.env.MIKROTIK_PORT || process.env.MIKROTIK_API_PORT || '3111', 10);
+    // Mengutamakan MIKROTIK_API_PORT agar tidak bentrok dengan PORT bawaan Vercel
+    this.port = parseInt(process.env.MIKROTIK_API_PORT || process.env.MIKROTIK_PORT || '3111', 10);
   }
 
   getClient() {
@@ -14,15 +15,25 @@ class MikrotikConfig {
       port: this.port,
       user: this.user,
       password: this.password,
-      timeout: 3000 // Batas koneksi 3 detik agar Serverless Vercel tidak hang
+      timeout: 2500,
+      keepalive: false
     });
+  }
+
+  // Helper untuk membatasi waktu koneksi agar tidak hang di Vercel
+  async connectClient(client) {
+    const connectPromise = client.connect();
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('MikroTik API Connection Timeout')), 2500)
+    );
+    return await Promise.race([connectPromise, timeoutPromise]);
   }
 
   // 1. Tambah User ke Hotspot MikroTik
   async addUserToHotspot(username, password, profile = 'default') {
     const client = this.getClient();
     try {
-      const api = await client.connect();
+      const api = await this.connectClient(client);
       await api.menu('/ip/hotspot/user').add({
         name: username,
         password: password,
@@ -43,7 +54,7 @@ class MikrotikConfig {
   async removeUserFromHotspot(username) {
     const client = this.getClient();
     try {
-      const api = await client.connect();
+      const api = await this.connectClient(client);
       const userMenu = api.menu('/ip/hotspot/user');
       const users = await userMenu.where('name', username).get();
       
@@ -65,7 +76,7 @@ class MikrotikConfig {
   async getUsersStats() {
     const client = this.getClient();
     try {
-      const api = await client.connect();
+      const api = await this.connectClient(client);
       
       const mtUsers = await api.menu('/ip/hotspot/user').get().catch(() => []);
       const mtActive = await api.menu('/ip/hotspot/active').get().catch(() => []);
